@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'src/data_repository.dart';
 import 'src/models.dart';
 import 'src/screens/about_screen.dart';
 import 'src/screens/endgame_screen.dart';
@@ -36,16 +37,40 @@ class SplashGate extends StatefulWidget {
 class _SplashGateState extends State<SplashGate> with SingleTickerProviderStateMixin {
   late final AnimationController _pulse =
       AnimationController(vsync: this, duration: const Duration(milliseconds: 1200))..repeat(reverse: true);
-  DesertData? _data;
-  Object? _error;
+  final _repo = DesertRepository();
+  DataResult? _result;
+  bool _refreshing = false;
 
   @override
   void initState() {
     super.initState();
-    Future.wait([DesertData.loadBundled(), Future.delayed(const Duration(milliseconds: 1400))]).then(
-      (r) => mounted ? setState(() => _data = r[0] as DesertData) : null,
-      onError: (Object e) => mounted ? setState(() => _error = e) : null,
-    );
+    _load(minSplash: true);
+  }
+
+  Future<void> _load({bool minSplash = false}) async {
+    if (_refreshing) return;
+    setState(() => _refreshing = true);
+    DataResult? r;
+    try {
+      final f = await Future.wait<Object?>([
+        _repo.load(),
+        if (minSplash) Future<void>.delayed(const Duration(milliseconds: 1400)),
+      ]);
+      r = f[0] as DataResult;
+    } catch (e) {
+      debugPrint('Load failed: $e');
+    }
+    if (!mounted) return;
+    setState(() {
+      if (r != null) _result = r;
+      _refreshing = false;
+    });
+    if (!minSplash && r != null) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+        content: Text(r.stale ? 'Couldn\'t reach Method.gg, showing saved data' : 'Deep Desert data is up to date'),
+        duration: const Duration(seconds: 2),
+      ));
+    }
   }
 
   @override
@@ -58,8 +83,13 @@ class _SplashGateState extends State<SplashGate> with SingleTickerProviderStateM
   Widget build(BuildContext context) {
     return AnimatedSwitcher(
       duration: const Duration(milliseconds: 600),
-      child: _data != null
-          ? HomeShell(data: _data!)
+      child: _result != null
+          ? DataScope(
+              result: _result!,
+              refreshing: _refreshing,
+              refresh: _load,
+              child: HomeShell(key: const ValueKey('home'), data: _result!.data),
+            )
           : Scaffold(
               key: const ValueKey('splash'),
               body: Center(
@@ -87,10 +117,10 @@ class _SplashGateState extends State<SplashGate> with SingleTickerProviderStateM
                   const SizedBox(height: 6),
                   Text('COMPANION', style: display(14, color: Spice.sand)),
                   const SizedBox(height: 28),
-                  if (_error != null)
-                    Text('Failed to load data: $_error')
-                  else
-                    const SizedBox(width: 140, child: LinearProgressIndicator(color: Spice.orange)),
+                  const SizedBox(width: 140, child: LinearProgressIndicator(color: Spice.orange)),
+                  const SizedBox(height: 14),
+                  Text('Reading this week\'s Deep Desert…',
+                      style: TextStyle(color: Spice.sand.withValues(alpha: 0.7), fontSize: 12.5)),
                 ]),
               ),
             ),
@@ -127,6 +157,7 @@ class _HomeShellState extends State<HomeShell> with SingleTickerProviderStateMix
   @override
   Widget build(BuildContext context) {
     final d = widget.data;
+    if (_mapIndex >= d.maps.length) _mapIndex = 0;
     final pages = [
       MapScreen(data: d, mapIndex: _mapIndex, onMapChanged: (i) => setState(() => _mapIndex = i)),
       LootScreen(data: d, mapIndex: _mapIndex, onMapChanged: (i) => setState(() => _mapIndex = i)),
@@ -139,7 +170,13 @@ class _HomeShellState extends State<HomeShell> with SingleTickerProviderStateMix
         opacity: curve,
         child: SlideTransition(
           position: Tween(begin: const Offset(0, 0.03), end: Offset.zero).animate(curve),
-          child: IndexedStack(index: _tab, children: pages),
+          child: RefreshIndicator(
+            color: Spice.orange,
+            backgroundColor: Spice.card,
+            notificationPredicate: (n) => n.metrics.axis == Axis.vertical,
+            onRefresh: () => DataScope.maybeOf(context)?.refresh() ?? Future.value(),
+            child: IndexedStack(index: _tab, children: pages),
+          ),
         ),
       ),
       bottomNavigationBar: NavigationBar(

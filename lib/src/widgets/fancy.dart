@@ -2,8 +2,10 @@ import 'dart:math';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+
 import 'package:google_fonts/google_fonts.dart';
 
+import '../data_repository.dart';
 import '../theme.dart';
 
 /// Night-blue to burnt-sand gradient with a subtle sand-grain texture.
@@ -110,7 +112,8 @@ class HeroHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    final scope = DataScope.maybeOf(context);
+    final header = Container(
       padding: EdgeInsets.fromLTRB(18, MediaQuery.paddingOf(context).top + 14, 8, 14),
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -146,6 +149,71 @@ class HeroHeader extends StatelessWidget {
           ]),
         ),
         ...actions,
+        if (scope != null)
+          scope.refreshing
+              ? const Padding(
+                  padding: EdgeInsets.all(14),
+                  child: SizedBox(
+                      width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2.2, color: Spice.amber)),
+                )
+              : IconButton(
+                  tooltip: 'Refresh data',
+                  icon: const Icon(Icons.refresh, color: Spice.amber),
+                  onPressed: scope.refresh,
+                ),
+      ]),
+    );
+    if (scope == null) return header;
+    return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      header,
+      _StatusStrip(result: scope.result),
+    ]);
+  }
+}
+
+class _StatusStrip extends StatelessWidget {
+  final DataResult result;
+  const _StatusStrip({required this.result});
+
+  static String _fmt(DateTime? t) {
+    if (t == null) return 'unknown';
+    final d = DateTime.now().difference(t);
+    if (d.inMinutes < 1) return 'just now';
+    if (d.inHours < 1) return '${d.inMinutes}m ago';
+    if (d.inDays < 1) return '${d.inHours}h ago';
+    const m = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return '${m[t.month - 1]} ${t.day}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final week = result.data.weekLabel ?? '?';
+    final line = 'Updated ${_fmt(result.updatedAt)} · Week $week';
+    final stale = result.stale;
+    final color = stale ? Spice.orange : Spice.amber;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(colors: [
+          color.withValues(alpha: stale ? 0.20 : 0.08),
+          Colors.transparent,
+        ]),
+        border: Border(bottom: BorderSide(color: color.withValues(alpha: 0.18))),
+      ),
+      child: Row(children: [
+        Icon(stale ? Icons.cloud_off : Icons.wb_sunny_outlined, size: 14, color: color),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            stale
+                ? '$line · ${result.origin == DataOrigin.cache ? 'Offline copy' : 'Built-in copy'}, data may be stale'
+                : line,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: Spice.sand.withValues(alpha: 0.75), fontSize: 11.5, letterSpacing: 0.3),
+          ),
+        ),
       ]),
     );
   }
